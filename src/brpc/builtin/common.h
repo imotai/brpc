@@ -52,6 +52,7 @@ enum ProfilingType {
     PROFILING_HEAP = 1,
     PROFILING_GROWTH = 2,
     PROFILING_CONTENTION = 3,
+    PROFILING_IOBUF = 4,
 };
 
 DECLARE_string(rpc_profiling_dir);
@@ -111,6 +112,9 @@ int FileChecksum(const char* file_path, unsigned char* checksum);
 
 // Get name of current program.
 const char* GetProgramName();
+
+// Get absolute path of current program.
+const char* GetProgramPath();
 
 // Get checksum of current program image.
 const char* GetProgramChecksum();

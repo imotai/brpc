@@ -24,6 +24,7 @@
 #include "butil/containers/flat_map.h"           // butil::FlatMap
 #include "butil/scoped_lock.h"                   // BAIDU_SCOPE_LOCK
 #include "butil/file_util.h"                     // butil::FilePath
+#include "butil/reloadable_flags.h"
 #include "bvar/variable.h"
 #include "bvar/mvariable.h"
 
@@ -35,10 +36,6 @@ DECLARE_bool(bvar_abort_on_same_name);
 
 extern bool s_bvar_may_abort;
 
-DEFINE_int32(bvar_max_multi_dimension_metric_number, 1024, "Max number of multi dimension");
-DEFINE_int32(bvar_max_dump_multi_dimension_metric_number, 1024,
-    "Max number of multi dimension metric number to dump by prometheus rpc service");
-
 static bool validator_bvar_max_multi_dimension_metric_number(const char*, int32_t v) {
     if (v < 1) {
         LOG(ERROR) << "Invalid bvar_max_multi_dimension_metric_number=" << v;
@@ -47,6 +44,10 @@ static bool validator_bvar_max_multi_dimension_metric_number(const char*, int32_
     return true;
 }
 
+DEFINE_int32(bvar_max_multi_dimension_metric_number, 1024, "Max number of multi dimension");
+BUTIL_VALIDATE_GFLAG(bvar_max_multi_dimension_metric_number,
+                     validator_bvar_max_multi_dimension_metric_number);
+
 static bool validator_bvar_max_dump_multi_dimension_metric_number(const char*, int32_t v) {
     if (v < 0) {
         LOG(ERROR) << "Invalid bvar_max_dump_multi_dimension_metric_number=" << v;
@@ -54,13 +55,10 @@ static bool validator_bvar_max_dump_multi_dimension_metric_number(const char*, i
     }
     return true;
 }
-
-
-const bool ALLOW_UNUSED dummp_bvar_max_multi_dimension_metric_number = ::GFLAGS_NS::RegisterFlagValidator(
-    &FLAGS_bvar_max_multi_dimension_metric_number, validator_bvar_max_multi_dimension_metric_number);
-
-const bool ALLOW_UNUSED dummp_bvar_max_dump_multi_dimension_metric_number = ::GFLAGS_NS::RegisterFlagValidator(
-  &FLAGS_bvar_max_dump_multi_dimension_metric_number, validator_bvar_max_dump_multi_dimension_metric_number);
+DEFINE_int32(bvar_max_dump_multi_dimension_metric_number, 1024,
+             "Max number of multi dimension metric number to dump by prometheus rpc service");
+BUTIL_VALIDATE_GFLAG(bvar_max_dump_multi_dimension_metric_number,
+                     validator_bvar_max_dump_multi_dimension_metric_number);
 
 class MVarEntry {
 public:
@@ -75,7 +73,9 @@ struct MVarMapWithLock : public MVarMap {
     pthread_mutex_t mutex;
 
     MVarMapWithLock() {
-        CHECK_EQ(0, init(256, 80));
+        if (init(256) != 0) {
+            LOG(WARNING) << "Fail to init";
+        }
         pthread_mutex_init(&mutex, NULL);
     }
 };
@@ -259,13 +259,13 @@ size_t MVariable::dump_exposed(Dumper* dumper, const DumpOptions* options) {
         if (entry) {
             n += entry->var->dump(dumper, &opt);
         }
-	if (n > static_cast<size_t>(FLAGS_bvar_max_dump_multi_dimension_metric_number)) {
+        if (n > static_cast<size_t>(FLAGS_bvar_max_dump_multi_dimension_metric_number)) {
             LOG(WARNING) << "truncated because of \
-		            exceed max dump multi dimension label number["
-			 << FLAGS_bvar_max_dump_multi_dimension_metric_number
-			 << "]";
+                            exceed max dump multi dimension label number["
+                         << FLAGS_bvar_max_dump_multi_dimension_metric_number
+                         << "]";
             break;
-	}
+        }
     }
     return n;
 }

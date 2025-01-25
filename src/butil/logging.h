@@ -53,10 +53,27 @@
 #  define DPLOG_IF(...) DLOG_IF(__VA_ARGS__)
 #  define DPCHECK(...) DCHECK(__VA_ARGS__)
 #  define DVPLOG(...) DVLOG(__VA_ARGS__)
-# endif
+# endif // DCHECK_IS_ON()
+
+#ifndef LOG_BACKTRACE_IF
+#define LOG_BACKTRACE_IF(severity, condition) LOG_IF(severity, condition)
+#endif // LOG_BACKTRACE_IF
+
+#ifndef LOG_BACKTRACE_IF_ONCE
+#define LOG_BACKTRACE_IF_ONCE(severity, condition) LOG_IF_ONCE(severity, condition)
+#endif // LOG_BACKTRACE_IF_ONCE
+
+#ifndef LOG_BACKTRACE_FIRST_N
+#define LOG_BACKTRACE_FIRST_N(severity, N) LOG_FIRST_N(severity, N)
+#endif // LOG_BACKTRACE_FIRST_N
+
+#ifndef LOG_BACKTRACE_IF_FIRST_N
+#define LOG_BACKTRACE_IF_FIRST_N(severity, condition, N) LOG_IF_FIRST_N(severity, condition, N)
+#endif // LOG_BACKTRACE_IF_FIRST_N
+
 
 #define LOG_AT(severity, file, line)                                    \
-    google::LogMessage(file, line, google::severity).stream()
+    ::google::LogMessage(file, line, ::google::severity).stream()
 
 #else
 
@@ -468,6 +485,10 @@ void print_vlog_sites(VLogSitePrinter*);
     BAIDU_LAZY_STREAM(LOG_STREAM(severity), LOG_IS_ON(severity))
 #define LOG_IF(severity, condition)                                     \
     BAIDU_LAZY_STREAM(LOG_STREAM(severity), LOG_IS_ON(severity) && (condition))
+#ifndef LOG_BACKTRACE_IF
+#define LOG_BACKTRACE_IF(severity, condition)                               \
+    BAIDU_LAZY_STREAM(LOG_STREAM(severity).SetBacktrace(), LOG_IS_ON(severity) && (condition))
+#endif // LOG_BACKTRACE_IF
 
 // FIXME(gejun): Should always crash.
 #define LOG_ASSERT(condition)                                           \
@@ -903,7 +924,7 @@ friend void DestroyLogStream(LogStream*);
 public:
     LogStream()
         : std::ostream(this), _file("-"), _line(0), _func("-")
-        , _severity(0) , _noflush(false), _is_check(false) {
+        , _severity(0) , _noflush(false), _is_check(false), _backtrace(false) {
     }
 
     ~LogStream() {
@@ -942,6 +963,11 @@ public:
         return *this;
     }
 
+    LogStream& SetBacktrace() {
+        _backtrace = true;
+        return *this;
+    }
+
     bool empty() const { return pbase() == pptr(); }
 
     butil::StringPiece content() const
@@ -972,6 +998,7 @@ private:
             clear();
             SetLastSystemErrorCode(err);
             _is_check = false;
+            _backtrace = false;
         }
     }
 
@@ -981,6 +1008,7 @@ private:
     LogSeverity _severity;
     bool _noflush;
     bool _is_check;
+    bool _backtrace;
 };
 
 // This class more or less represents a particular log message.  You
@@ -1159,7 +1187,7 @@ inline std::ostream& operator<<(std::ostream& out, const std::wstring& wstr) {
 // Select default policy: LOG(ERROR)
 #define NOTIMPLEMENTED_POLICY 4
 #endif
-#endif
+#endif // NOTIMPLEMENTED_POLICY
 
 #if defined(COMPILER_GCC)
 // On Linux, with GCC, we can use __PRETTY_FUNCTION__ to get the demangled name
@@ -1231,8 +1259,13 @@ inline std::ostream& operator<<(std::ostream& out, const std::wstring& wstr) {
 // Almost zero overhead when the log was printed.
 #ifndef LOG_ONCE
 # define LOG_ONCE(severity) LOG_FIRST_N(severity, 1)
+# define LOG_BACKTRACE_ONCE(severity) LOG_BACKTRACE_FIRST_N(severity, 1)
 # define LOG_IF_ONCE(severity, condition) LOG_IF_FIRST_N(severity, condition, 1)
-#endif
+#ifndef LOG_BACKTRACE_IF_ONCE
+# define LOG_BACKTRACE_IF_ONCE(severity, condition) \
+    LOG_BACKTRACE_IF_FIRST_N(severity, condition, 1)
+#endif // LOG_BACKTRACE_IF_ONCE
+#endif // LOG_ONCE
 
 // Print a log after every N calls. First call always prints.
 // Each call to this macro has a cost of relaxed atomic increment.
@@ -1242,7 +1275,7 @@ inline std::ostream& operator<<(std::ostream& out, const std::wstring& wstr) {
      BAIDU_LOG_IF_EVERY_N_IMPL(LOG_IF, severity, true, N)
 # define LOG_IF_EVERY_N(severity, condition, N)                  \
      BAIDU_LOG_IF_EVERY_N_IMPL(LOG_IF, severity, condition, N)
-#endif
+#endif // LOG_EVERY_N
 
 // Print logs for first N calls.
 // Almost zero overhead when the log was printed for N times
@@ -1250,9 +1283,17 @@ inline std::ostream& operator<<(std::ostream& out, const std::wstring& wstr) {
 #ifndef LOG_FIRST_N
 # define LOG_FIRST_N(severity, N)                                \
      BAIDU_LOG_IF_FIRST_N_IMPL(LOG_IF, severity, true, N)
+#ifndef LOG_BACKTRACE_FIRST_N
+# define LOG_BACKTRACE_FIRST_N(severity, N)                          \
+     BAIDU_LOG_IF_FIRST_N_IMPL(LOG_BACKTRACE_IF, severity, true, N)
+#endif // LOG_BACKTRACE_FIRST_N
 # define LOG_IF_FIRST_N(severity, condition, N)                  \
      BAIDU_LOG_IF_FIRST_N_IMPL(LOG_IF, severity, condition, N)
-#endif
+#ifndef LOG_BACKTRACE_IF_FIRST_N
+# define LOG_BACKTRACE_IF_FIRST_N(severity, condition, N)            \
+     BAIDU_LOG_IF_FIRST_N_IMPL(LOG_BACKTRACE_IF, severity, condition, N)
+#endif // LOG_BACKTRACE_IF_FIRST_N
+#endif // LOG_FIRST_N
 
 // Print a log every second. (not present in glog). First call always prints.
 // Each call to this macro has a cost of calling gettimeofday.
@@ -1261,33 +1302,33 @@ inline std::ostream& operator<<(std::ostream& out, const std::wstring& wstr) {
      BAIDU_LOG_IF_EVERY_SECOND_IMPL(LOG_IF, severity, true)
 # define LOG_IF_EVERY_SECOND(severity, condition)                \
      BAIDU_LOG_IF_EVERY_SECOND_IMPL(LOG_IF, severity, condition)
-#endif
+#endif // LOG_EVERY_SECOND
 
 #ifndef PLOG_EVERY_N
 # define PLOG_EVERY_N(severity, N)                               \
      BAIDU_LOG_IF_EVERY_N_IMPL(PLOG_IF, severity, true, N)
 # define PLOG_IF_EVERY_N(severity, condition, N)                 \
      BAIDU_LOG_IF_EVERY_N_IMPL(PLOG_IF, severity, condition, N)
-#endif
+#endif // PLOG_EVERY_N
 
 #ifndef PLOG_FIRST_N
 # define PLOG_FIRST_N(severity, N)                               \
      BAIDU_LOG_IF_FIRST_N_IMPL(PLOG_IF, severity, true, N)
 # define PLOG_IF_FIRST_N(severity, condition, N)                 \
      BAIDU_LOG_IF_FIRST_N_IMPL(PLOG_IF, severity, condition, N)
-#endif
+#endif // PLOG_FIRST_N
 
 #ifndef PLOG_ONCE
 # define PLOG_ONCE(severity) PLOG_FIRST_N(severity, 1)
 # define PLOG_IF_ONCE(severity, condition) PLOG_IF_FIRST_N(severity, condition, 1)
-#endif
+#endif // PLOG_ONCE
 
 #ifndef PLOG_EVERY_SECOND
 # define PLOG_EVERY_SECOND(severity)                             \
      BAIDU_LOG_IF_EVERY_SECOND_IMPL(PLOG_IF, severity, true)
 # define PLOG_IF_EVERY_SECOND(severity, condition)                       \
      BAIDU_LOG_IF_EVERY_SECOND_IMPL(PLOG_IF, severity, condition)
-#endif
+#endif // PLOG_EVERY_SECOND
 
 // DEBUG_MODE is for uses like
 //   if (DEBUG_MODE) foo.CheckThatFoo();

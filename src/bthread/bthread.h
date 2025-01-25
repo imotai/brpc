@@ -28,11 +28,24 @@
 #include "bthread/errno.h"
 
 #if defined(__cplusplus)
-#  include <iostream>
-#  include "bthread/mutex.h"        // use bthread_mutex_t in the RAII way
-#endif
+#include <iostream>
+#include "bthread/mutex.h"        // use bthread_mutex_t in the RAII way
+#endif // __cplusplus
 
 #include "bthread/id.h"
+
+#if defined(__cplusplus) && defined(BRPC_BTHREAD_TRACER)
+namespace bthread {
+// Assign a TaskMeta to the pthread and set the state to Running,
+// so that `stack_trace()' can trace the call stack of the pthread.
+bthread_t init_for_pthread_stack_trace();
+
+// Trace the call stack of the bthread, or pthread which has been
+// initialized by `init_for_pthread_stack_trace()'.
+void stack_trace(std::ostream& os, bthread_t tid);
+std::string stack_trace(bthread_t tid);
+} // namespace bthread
+#endif // __cplusplus && BRPC_BTHREAD_TRACER
 
 __BEGIN_DECLS
 
@@ -73,7 +86,7 @@ extern int bthread_start_background(bthread_t* __restrict tid,
 // bthread_interrupt() guarantees that Thread2 is woken up reliably no matter
 // how the 2 threads are interleaved.
 // Returns 0 on success, errno otherwise.
-extern int bthread_interrupt(bthread_t tid);
+extern int bthread_interrupt(bthread_t tid, bthread_tag_t tag = BTHREAD_TAG_DEFAULT);
 
 // Make bthread_stopped() on the bthread return true and interrupt the bthread.
 // Note that current bthread_stop() solely sets the built-in "stop flag" and
@@ -170,7 +183,7 @@ extern int bthread_usleep(uint64_t microseconds);
 // NOTE: mutexattr is not used in current mutex implementation. User shall
 //       always pass a NULL attribute.
 extern int bthread_mutex_init(bthread_mutex_t* __restrict mutex,
-                              const bthread_mutexattr_t* __restrict mutex_attr);
+                              const bthread_mutexattr_t* __restrict attr);
 
 // Destroy `mutex'.
 extern int bthread_mutex_destroy(bthread_mutex_t* mutex);
@@ -187,6 +200,13 @@ extern int bthread_mutex_timedlock(bthread_mutex_t* __restrict mutex,
 
 // Unlock `mutex'.
 extern int bthread_mutex_unlock(bthread_mutex_t* mutex);
+
+extern int bthread_mutexattr_init(bthread_mutexattr_t* attr);
+
+// Disable the contention profile of the mutex.
+extern int bthread_mutexattr_disable_csite(bthread_mutexattr_t* attr);
+
+extern int bthread_mutexattr_destroy(bthread_mutexattr_t* attr);
 
 // -----------------------------------------------
 // Functions for handling conditional variables.
@@ -241,9 +261,8 @@ extern int bthread_rwlock_rdlock(bthread_rwlock_t* rwlock);
 extern int bthread_rwlock_tryrdlock(bthread_rwlock_t* rwlock);
 
 // Try to acquire read lock for `rwlock' or return after specfied time.
-extern int bthread_rwlock_timedrdlock(
-    bthread_rwlock_t* __restrict rwlock,
-    const struct timespec* __restrict abstime);
+extern int bthread_rwlock_timedrdlock(bthread_rwlock_t* __restrict rwlock,
+                                      const struct timespec* __restrict abstime);
 
 // Acquire write lock for `rwlock'.
 extern int bthread_rwlock_wrlock(bthread_rwlock_t* rwlock);
@@ -252,9 +271,8 @@ extern int bthread_rwlock_wrlock(bthread_rwlock_t* rwlock);
 extern int bthread_rwlock_trywrlock(bthread_rwlock_t* rwlock);
 
 // Try to acquire write lock for `rwlock' or return after specfied time.
-extern int bthread_rwlock_timedwrlock(
-    bthread_rwlock_t* __restrict rwlock,
-    const struct timespec* __restrict abstime);
+extern int bthread_rwlock_timedwrlock(bthread_rwlock_t* __restrict rwlock,
+                                      const struct timespec* __restrict abstime);
 
 // Unlock `rwlock'.
 extern int bthread_rwlock_unlock(bthread_rwlock_t* rwlock);
@@ -276,6 +294,53 @@ extern int bthread_rwlockattr_getkind_np(const bthread_rwlockattr_t* attr,
 // Set reader/write preference.
 extern int bthread_rwlockattr_setkind_np(bthread_rwlockattr_t* attr,
                                          int pref);
+
+// -------------------------------------------
+// Functions for handling semaphore.
+// -------------------------------------------
+
+// Initialize the semaphore referred to by `sem'. The value of the
+// initialized semaphore shall be `value'.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_init(bthread_sem_t* sem, unsigned value);
+
+// Disable the contention profile of the semaphore  referred to by `sem'.
+extern int bthread_sem_disable_csite(bthread_sem_t* sem);
+
+// Destroy the semaphore indicated by `sem'.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_destroy(bthread_sem_t* semaphore);
+
+// Lock the semaphore referenced by `sem' by performing a semaphore
+// lock operation on that semaphore. If the semaphore value is currently
+// zero, then the calling (b)thread shall not return from the call to
+// bthread_sema_wait() function until it locks the semaphore.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_wait(bthread_sem_t* sem);
+
+// Lock the semaphore referenced by `sem' as in the bthread_sem_wait()
+// function. However, if the semaphore cannot be locked without waiting
+// for another (b)thread to unlock the semaphore by performing a
+// bthread_sem_post() function, this wait shall be terminated when the
+// specified timeout expires.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_timedwait(bthread_sem_t* sem, const struct timespec* abstime);
+
+// Lock the semaphore referenced by `sem' only if the semaphore is
+// currently not locked; that is, if the semaphore value is currently
+// positive. Otherwise, it shall not lock the semaphore.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_trywait(bthread_sem_t* sem);
+
+// Unlock the semaphore referenced by `sem' by performing
+// a semaphore unlock operation on that semaphore.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_post(bthread_sem_t* sem);
+
+// Unlock the semaphore referenced by `sem' by performing
+// `n' semaphore unlock operation on that semaphore.
+// Return 0 on success, errno otherwise.
+extern int bthread_sem_post_n(bthread_sem_t* sem, size_t n);
 
 
 // ----------------------------------------------------------------------
@@ -335,6 +400,33 @@ extern void* bthread_getspecific(bthread_key_t key);
 
 // Return current bthread tag
 extern bthread_tag_t bthread_self_tag(void);
+
+// The first call to bthread_once() by any thread in a process, with a given
+// once_control, will call the init_routine() with no arguments. Subsequent
+// calls of bthread_once() with the same once_control will not call the
+// init_routine(). On return from bthread_once(), it is guaranteed that
+// init_routine() has completed. The once_control parameter is used to
+// determine whether the associated initialisation routine has been called.
+// Returns 0 on success, error code otherwise.
+extern int bthread_once(bthread_once_t* once_control, void (*init_routine)());
+
+ /**
+ * @brief Retrieves the CPU time consumed by the current bthread.
+ *
+ * This function returns the CPU time (in nanoseconds) used by the current 
+ * bthread, excluding time spent in blocking I/O operations. The result 
+ * provides an accurate measure of CPU time utilized by the bthread's 
+ * execution.
+ *
+ * @note The functionality of this function depends on the 
+ *       `bthread_enable_cpu_clock_stat` flag. Ensure this flag is enabled 
+ *       for the function to provide meaningful results. If the flag is 
+ *       disabled, the function may return an invalid value or behave 
+ *       unexpectedly.
+ *
+ * @return int64_t The CPU time in nanoseconds consumed by the bthread.
+ */
+extern uint64_t bthread_cpu_clock_ns(void);
 
 __END_DECLS
 

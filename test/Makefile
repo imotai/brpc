@@ -145,7 +145,9 @@ TEST_BUTIL_SOURCES = \
     scoped_locale.cc \
     popen_unittest.cpp \
     bounded_queue_unittest.cc \
-    butil_unittest_main.cpp
+    butil_unittest_main.cpp \
+    scope_guard_unittest.cpp \
+    optional_unittest.cpp
 
 ifeq ($(SYSTEM), Linux)
     TEST_BUTIL_SOURCES += test_file_util_linux.cc \
@@ -158,9 +160,11 @@ ifeq ($(SYSTEM), Darwin)
 	DYNAMIC_LINKINGS+=-Wl,-U,_bthread_getspecific
 	DYNAMIC_LINKINGS+=-Wl,-U,_bthread_setspecific
 	DYNAMIC_LINKINGS+=-Wl,-U,_bthread_key_create
+	DYNAMIC_LINKINGS+=-Wl,-U,_bthread_self
+	DYNAMIC_LINKINGS+=-Wl,-U,_bthread_timed_connect
 endif
 
-UT_DYNAMIC_LINKINGS = $(DYNAMIC_LINKINGS) -lbrpc.dbg
+UT_DYNAMIC_LINKINGS = -lbrpc.dbg $(DYNAMIC_LINKINGS)
 
 TEST_BUTIL_OBJS = iobuf.pb.o $(addsuffix .o, $(basename $(TEST_BUTIL_SOURCES))) 
 

@@ -114,7 +114,7 @@ struct BAIDU_CACHELINE_ALIGNMENT Id {
     // contended_ver: locked and contended
     uint32_t first_ver;
     uint32_t locked_ver;
-    internal::FastPthreadMutex mutex;
+    FastPthreadMutex mutex;
     void* data;
     int (*on_error)(bthread_id_t, void*, int);
     int (*on_error2)(bthread_id_t, void*, int, const std::string&);
@@ -291,6 +291,7 @@ void id_pool_status(std::ostream &os) {
 struct IdTraits {
     static const size_t BLOCK_SIZE = 63;
     static const size_t MAX_ENTRIES = 100000;
+    static const size_t INIT_GC_SIZE = 4096;
     static const bthread_id_t ID_INIT;
     static bool exists(bthread_id_t id)
     { return bthread::id_exists_with_true_negatives(id); }
