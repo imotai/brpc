@@ -199,6 +199,19 @@ set(BRPC_VERSION 1.0.0)
 Version:	1.0.0
 ```
 
+#### 更新 `MODULE.bazel` 文件
+
+编辑项目根目录下 `MODULE.bazel` 文件，更新版本号，并提交至代码仓库，本文以 `1.0.0` 版本为例，修改 `version` 为：
+
+```
+# in MODULE.bazel
+module(
+  ...
+  version = '1.0.0',
+  ...
+)
+```
+
 ### 4. 创建发布 tag
 ```bash
 export BRPCVERSION=1.0.0
@@ -499,7 +512,7 @@ svn mv https://dist.apache.org/repos/dist/dev/brpc/$BRPCVERSION https://dist.apa
 
 ### 2. 创建 GitHub 版本发布页
 
-在 [GitHub Releases 页面](https://github.com/apache/brpc/tags)的对应 tag 上点击，创建新的 Release，编辑版本号及版本说明，并点击 Publish release。
+在 [GitHub Releases 页面](https://github.com/apache/brpc/tags)的对应 tag 上点击，创建新的 Release，编辑版本号及版本说明。注意Release title统一根据本次版本号写为Apache bRPC 1.x.0，并点击 Publish release。
 
 ### 3. 更新网站下载页
 
@@ -543,7 +556,7 @@ Brief notes of this release:
 - zzz
 
 More details regarding Apache brpc can be found at:
-http://brpc.apache.org/
+https://brpc.apache.org/
 
 The release is available for download at:
 https://brpc.apache.org/download/
@@ -551,7 +564,7 @@ https://brpc.apache.org/download/
 The release notes can be found here:
 https://github.com/apache/brpc/releases/tag/1.0.0
 
-Website: http://brpc.apache.org/
+Website: https://brpc.apache.org/
 
 Apache bRPC Resources:
 - Issue: https://github.com/apache/brpc/issues/
@@ -570,7 +583,8 @@ Apache bRPC Community
 
 #### 微信公众号
 
-参考 <https://mp.weixin.qq.com/s/DeFhpAV_AYsn_Xd1ylPTSg>。
+参考 <https://mp.weixin.qq.com/s/DeFhpAV_AYsn_Xd1ylPTSg>。  
+建议先在腾讯文档中编辑后粘贴至公众号，统一字体大小和格式，参考 [腾讯文档：bRPC 1.11.0](https://docs.qq.com/doc/DYmZ2Tnpub1lySWZO?_t=1730208105245&u=31460cd039dd4461877a61ab9f56be1f)
 
 
 ### 6. 更新 master 分支

@@ -198,6 +198,19 @@ Edit the `/package/rpm/brpc.spec` file in the project root directory, update the
 Version:	1.0.0
 ```
 
+#### Update the `MODULE.bazel` file
+
+Edit the `MODULE.bazel` file in the project root directory, update the version number, and submit it to the code repository. For example:
+
+```
+# in MODULE.bazel
+module(
+  ...
+  version = '1.0.0',
+  ...
+)
+```
+
 ### 4. Create releasing tag
 
 Pull the release branch to tag, for example:
@@ -550,7 +563,7 @@ Brief notes of this release:
 - zzz
 
 More details regarding Apache brpc can be found at:
-http://brpc.apache.org/
+https://brpc.apache.org/
 
 The release is available for download at:
 https://brpc.apache.org/download/
@@ -558,7 +571,7 @@ https://brpc.apache.org/download/
 The release notes can be found here:
 https://github.com/apache/brpc/releases/tag/1.0.0
 
-Website: http://brpc.apache.org/
+Website: https://brpc.apache.org/
 
 Apache bRPC Resources:
 - Issue: https://github.com/apache/brpc/issues/

@@ -53,10 +53,11 @@ DECLARE_int32(max_connection_pool_size);
 class Server;
 class MethodStatus;
 namespace policy {
-void SendRpcResponse(int64_t correlation_id, Controller* cntl, 
-                     const google::protobuf::Message* req,
-                     const google::protobuf::Message* res,
-                     const Server* server_raw, MethodStatus *, int64_t);
+void SendRpcResponse(int64_t correlation_id,
+                     Controller* cntl,
+                     RpcPBMessages* messages,
+                     const Server* server_raw,
+                     MethodStatus *, int64_t);
 } // policy
 } // brpc
 
@@ -64,7 +65,7 @@ int main(int argc, char* argv[]) {
     brpc::FLAGS_idle_timeout_second = 0;
     brpc::FLAGS_max_connection_pool_size = 0;
     testing::InitGoogleTest(&argc, argv);
-    GFLAGS_NS::ParseCommandLineFlags(&argc, &argv, true);
+    GFLAGS_NAMESPACE::ParseCommandLineFlags(&argc, &argv, true);
     return RUN_ALL_TESTS();
 }
 
@@ -200,6 +201,10 @@ protected:
     ChannelTest() 
         : _ep(butil::IP_ANY, 8787)
         , _close_fd_once(false) {
+        if (!_dummy.options().rpc_pb_message_factory) {
+            _dummy._options.rpc_pb_message_factory = new brpc::DefaultRpcPBMessageFactory();
+        }
+
         pthread_once(&register_mock_protocol, register_protocol);
         const brpc::InputMessageHandler pairs[] = {
             { brpc::policy::ParseRpcMessage, 
@@ -255,8 +260,10 @@ protected:
         ASSERT_EQ(ts->_svc.descriptor()->full_name(), req_meta.service_name());
         const google::protobuf::MethodDescriptor* method =
             ts->_svc.descriptor()->FindMethodByName(req_meta.method_name());
-        google::protobuf::Message* req =
-              ts->_svc.GetRequestPrototype(method).New();
+        brpc::RpcPBMessages* messages =
+            ts->_dummy.options().rpc_pb_message_factory->Get(ts->_svc, *method);
+        google::protobuf::Message* req = messages->Request();
+        google::protobuf::Message* res = messages->Response();
         if (meta.attachment_size() != 0) {
             butil::IOBuf req_buf;
             msg->payload.cutn(&req_buf, msg->payload.size() - meta.attachment_size());
@@ -271,18 +278,14 @@ protected:
         cntl->_current_call.sending_sock.reset(ptr.release());
         cntl->_server = &ts->_dummy;
 
-        google::protobuf::Message* res =
-              ts->_svc.GetResponsePrototype(method).New();
         google::protobuf::Closure* done =
               brpc::NewCallback<
             int64_t, brpc::Controller*,
-            const google::protobuf::Message*,
-            const google::protobuf::Message*,
+            brpc::RpcPBMessages*,
             const brpc::Server*,
-            brpc::MethodStatus*, int64_t>(
-                &brpc::policy::SendRpcResponse,
-                meta.correlation_id(), cntl, req, res,
-                &ts->_dummy, NULL, -1);
+            brpc::MethodStatus*, int64_t>(&brpc::policy::SendRpcResponse,
+                                          meta.correlation_id(), cntl,
+                                          messages, &ts->_dummy, NULL, -1);
         ts->_svc.CallMethod(method, cntl, req, res, done);
     }
 
@@ -310,7 +313,8 @@ protected:
                       bool single_server,
                       bool short_connection,
                       const brpc::Authenticator* auth = NULL,
-                      std::string connection_group = std::string()) {
+                      std::string connection_group = std::string(),
+                      bool use_backup_request_policy = false) {
         brpc::ChannelOptions opt;
         if (short_connection) {
             opt.connection_type = brpc::CONNECTION_TYPE_SHORT;
@@ -318,6 +322,9 @@ protected:
         opt.auth = auth;
         opt.max_retry = 0;
         opt.connection_group = connection_group;
+        if (use_backup_request_policy) {
+            opt.backup_request_policy = &_backup_request_policy;
+        }
         if (single_server) {
             EXPECT_EQ(0, channel->Init(_ep, &opt)); 
         } else {                                                 
@@ -564,6 +571,24 @@ protected:
                                 &req->requests(channel_index),
                                 res->add_responses(), 0);
         }
+    };
+
+    class SuccessLimitCallMapper : public brpc::CallMapper {
+    public:
+        brpc::SubCall Map(int channel_index,
+                          const google::protobuf::MethodDescriptor* method,
+                          const google::protobuf::Message* req_base,
+                          google::protobuf::Message* response) override {
+            auto req = brpc::Clone<test::EchoRequest>(req_base);
+            req->set_code(channel_index + 1/*non-zero*/);
+            if (_index++ > 0) {
+                req->set_sleep_us(5 * 1000);
+            }
+            return brpc::SubCall(method, req, response->New(),
+                                 brpc::DELETE_REQUEST | brpc::DELETE_RESPONSE);
+        }
+    private:
+        size_t _index{0};
     };
 
     class MergeNothing : public brpc::ResponseMerger {
@@ -823,7 +848,60 @@ protected:
         }
         StopAndJoin();
     }
-    
+
+    void TestSuccessLimitParallel(bool single_server, bool async, bool short_connection) {
+        std::cout << " *** single=" << single_server
+                  << " async=" << async
+                  << " short=" << short_connection << std::endl;
+
+        ASSERT_EQ(0, StartAccept(_ep));
+        const size_t NCHANS = 8;
+        brpc::Channel subchans[NCHANS];
+        brpc::ParallelChannel channel;
+        brpc::ParallelChannelOptions options;
+        // Only care about the first successful response.
+        options.success_limit = 1;
+        channel.Init(&options);
+        butil::intrusive_ptr<brpc::CallMapper> fast_call_mapper(new SuccessLimitCallMapper);
+        for (size_t i = 0; i < NCHANS; ++i) {
+            SetUpChannel(&subchans[i], single_server, short_connection);
+            ASSERT_EQ(0, channel.AddChannel(
+                &subchans[i], brpc::DOESNT_OWN_CHANNEL, fast_call_mapper, NULL));
+        }
+        brpc::Controller cntl;
+        test::EchoRequest req;
+        test::EchoResponse res;
+        req.set_message(__FUNCTION__);
+        req.set_code(23);
+        CallMethod(&channel, &cntl, &req, &res, async);
+
+        EXPECT_EQ(0, cntl.ErrorCode()) << cntl.ErrorText();
+        EXPECT_EQ(NCHANS, (size_t)cntl.sub_count());
+        for (int i = 0; i < cntl.sub_count(); ++i) {
+            EXPECT_TRUE(cntl.sub(i)) << "i=" << i;
+            if (0 == i) {
+                EXPECT_TRUE(!cntl.sub(i)->Failed()) << "i=" << i;
+            } else {
+                EXPECT_TRUE(cntl.sub(i)->Failed()) << "i=" << i;
+                EXPECT_EQ(brpc::EPCHANFINISH, cntl.sub(i)->ErrorCode()) << "i=" << i;
+            }
+        }
+        EXPECT_EQ("received " + std::string(__FUNCTION__), res.message());
+        ASSERT_EQ(1, res.code_list_size());
+        ASSERT_EQ((int)1, res.code_list(0));
+        if (short_connection) {
+            // Sleep to let `_messenger' detect `Socket' being `SetFailed'
+            const int64_t start_time = butil::gettimeofday_us();
+            while (_messenger.ConnectionCount() != 0) {
+                EXPECT_LT(butil::gettimeofday_us(), start_time + 100000L/*100ms*/);
+                bthread_usleep(1000);
+            }
+        } else {
+            EXPECT_GE(1ul, _messenger.ConnectionCount());
+        }
+        StopAndJoin();
+    }
+
     struct CancelerArg {
         int64_t sleep_before_cancel_us;
         brpc::CallId cid;
@@ -1918,6 +1996,107 @@ protected:
         StopAndJoin();
     }
 
+    void TestBackupRequest(bool single_server, bool async,
+                           bool short_connection) {
+        std::cout << " *** single=" << single_server
+                  << " async=" << async
+                  << " short=" << short_connection << std::endl;
+
+        ASSERT_EQ(0, StartAccept(_ep));
+        brpc::Channel channel;
+        SetUpChannel(&channel, single_server, short_connection);
+
+        const int RETRY_NUM = 1;
+        test::EchoRequest req;
+        test::EchoResponse res;
+        brpc::Controller cntl;
+        req.set_message(__FUNCTION__);
+
+        cntl.set_max_retry(RETRY_NUM);
+        cntl.set_backup_request_ms(10);  // 10ms
+        cntl.set_timeout_ms(100);  // 10ms
+        req.set_sleep_us(50000); // 100ms
+        CallMethod(&channel, &cntl, &req, &res, async);
+        ASSERT_EQ(0, cntl.ErrorCode()) << cntl.ErrorText();
+        ASSERT_TRUE(cntl.has_backup_request());
+        ASSERT_EQ(RETRY_NUM, cntl.retried_count());
+        bthread_usleep(70000);  // wait for the sleep task to finish
+
+        if (short_connection) {
+            // Sleep to let `_messenger' detect `Socket' being `SetFailed'
+            const int64_t start_time = butil::gettimeofday_us();
+            while (_messenger.ConnectionCount() != 0) {
+                EXPECT_LT(butil::gettimeofday_us(), start_time + 100000L/*100ms*/);
+                bthread_usleep(1000);
+            }
+        } else {
+            EXPECT_GE(1ul, _messenger.ConnectionCount());
+        }
+        StopAndJoin();
+    }
+
+    class BackupRequestPolicyImpl : public brpc::BackupRequestPolicy {
+    public:
+        int32_t GetBackupRequestMs(const brpc::Controller*) const override {
+            return 10;
+        }
+
+        // Return true if the backup request should be sent.
+        bool DoBackup(const brpc::Controller*) const override {
+            return backup;
+        }
+
+        void OnRPCEnd(const brpc::Controller*) override {}
+
+        bool backup{true};
+
+    };
+
+    void TestBackupRequestPolicy(bool single_server, bool async,
+                                 bool short_connection) {
+        ASSERT_EQ(0, StartAccept(_ep));
+        for (int i = 0; i < 2; ++i) {
+            bool backup = i == 0;
+            std::cout << " *** single=" << single_server
+                      << " async=" << async
+                      << " short=" << short_connection
+                      << " backup=" << backup
+                      << std::endl;
+
+            brpc::Channel channel;
+            SetUpChannel(&channel, single_server, short_connection, NULL, "", true);
+
+            const int RETRY_NUM = 1;
+            test::EchoRequest req;
+            test::EchoResponse res;
+            brpc::Controller cntl;
+            req.set_message(__FUNCTION__);
+
+            _backup_request_policy.backup = backup;
+            cntl.set_max_retry(RETRY_NUM);
+            cntl.set_timeout_ms(100);  // 100ms
+            req.set_sleep_us(50000); // 50ms
+            CallMethod(&channel, &cntl, &req, &res, async);
+            ASSERT_EQ(0, cntl.ErrorCode()) << cntl.ErrorText();
+            ASSERT_EQ(backup, cntl.has_backup_request());
+            ASSERT_EQ(backup ? RETRY_NUM : 0, cntl.retried_count());
+            bthread_usleep(70000);  // wait for the sleep task to finish
+
+            if (short_connection) {
+                // Sleep to let `_messenger' detect `Socket' being `SetFailed'
+                const int64_t start_time = butil::gettimeofday_us();
+                while (_messenger.ConnectionCount() != 0) {
+                    ASSERT_LT(butil::gettimeofday_us(), start_time + 100000L/*100ms*/);
+                    bthread_usleep(1000);
+                }
+            } else {
+                ASSERT_GE(1ul, _messenger.ConnectionCount());
+            }
+        }
+
+        StopAndJoin();
+    }
+
     butil::EndPoint _ep;
     butil::TempFile _server_list;                                        
     std::string _naming_url;
@@ -1930,6 +2109,7 @@ protected:
     bool _close_fd_once;
     
     MyEchoService _svc;
+    BackupRequestPolicyImpl _backup_request_policy;
 };
 
 class MyShared : public brpc::SharedObject {
@@ -2277,7 +2457,7 @@ TEST_F(ChannelTest, success_parallel) {
 }
 
 TEST_F(ChannelTest, success_duplicated_parallel) {
-    for (int i = 0; i <= 1; ++i) { // Flag SingleServer 
+    for (int i = 0; i <= 1; ++i) { // Flag SingleServer
         for (int j = 0; j <= 1; ++j) { // Flag Asynchronous
             for (int k = 0; k <=1; ++k) { // Flag ShortConnection
                 TestSuccessDuplicatedParallel(i, j, k);
@@ -2311,6 +2491,16 @@ TEST_F(ChannelTest, success_parallel2) {
         for (int j = 0; j <= 1; ++j) { // Flag Asynchronous
             for (int k = 0; k <=1; ++k) { // Flag ShortConnection
                 TestSuccessParallel2(i, j, k);
+            }
+        }
+    }
+}
+
+TEST_F(ChannelTest, success_limit_parallel) {
+    for (int i = 0; i <= 1; ++i) { // Flag SingleServer
+        for (int j = 0; j <= 1; ++j) { // Flag Asynchronous
+            for (int k = 0; k <=1; ++k) { // Flag ShortConnection
+                TestSuccessLimitParallel(i, j, k);
             }
         }
     }
@@ -2592,6 +2782,26 @@ TEST_F(ChannelTest, retry_backoff) {
                         TestRetryBackoff(j, k, l, true);
                     }
                 }
+            }
+        }
+    }
+}
+
+TEST_F(ChannelTest, backup_request) {
+    for (int i = 0; i <= 1; ++i) { // Flag SingleServer
+        for (int j = 0; j <= 1; ++j) { // Flag Asynchronous
+            for (int k = 0; k <= 1; ++k) { // Flag ShortConnection
+                TestBackupRequest(i, j, k);
+            }
+        }
+    }
+}
+
+TEST_F(ChannelTest, backup_request_policy) {
+    for (int i = 0; i <= 1; ++i) { // Flag SingleServer
+        for (int j = 0; j <= 1; ++j) { // Flag Asynchronous
+            for (int k = 0; k <= 1; ++k) { // Flag ShortConnection
+                TestBackupRequestPolicy(i, j, k);
             }
         }
     }

@@ -83,7 +83,7 @@ public:
     // then being popped by sched(pg), which is not necessary.
     static void sched_to(TaskGroup** pg, TaskMeta* next_meta);
     static void sched_to(TaskGroup** pg, bthread_t next_tid);
-    static void exchange(TaskGroup** pg, bthread_t next_tid);
+    static void exchange(TaskGroup** pg, TaskMeta* next_meta);
 
     // The callback will be run in the beginning of next-run bthread.
     // Can't be called by current bthread directly because it often needs
@@ -151,18 +151,18 @@ public:
     int64_t cumulated_cputime_ns() const { return _cumulated_cputime_ns; }
 
     // Push a bthread into the runqueue
-    void ready_to_run(bthread_t tid, bool nosignal = false);
+    void ready_to_run(TaskMeta* meta, bool nosignal = false);
     // Flush tasks pushed to rq but signalled.
     void flush_nosignal_tasks();
 
     // Push a bthread into the runqueue from another non-worker thread.
-    void ready_to_run_remote(bthread_t tid, bool nosignal = false);
+    void ready_to_run_remote(TaskMeta* meta, bool nosignal = false);
     void flush_nosignal_tasks_remote_locked(butil::Mutex& locked_mutex);
     void flush_nosignal_tasks_remote();
 
     // Automatically decide the caller is remote or local, and call
     // the corresponding function.
-    void ready_to_run_general(bthread_t tid, bool nosignal = false);
+    void ready_to_run_general(TaskMeta* meta, bool nosignal = false);
     void flush_nosignal_tasks_general();
 
     // The TaskControl that this TaskGroup belongs to.
@@ -173,7 +173,7 @@ public:
 
     // Wake up blocking ops in the thread.
     // Returns 0 on success, errno otherwise.
-    static int interrupt(bthread_t tid, TaskControl* c);
+    static int interrupt(bthread_t tid, TaskControl* c, bthread_tag_t tag);
 
     // Get the meta associate with the task.
     static TaskMeta* address_meta(bthread_t tid);
@@ -182,7 +182,23 @@ public:
     // process make go on indefinitely.
     void push_rq(bthread_t tid);
 
+    // Returns size of local run queue.
+    size_t rq_size() const {
+        return _rq.volatile_size();
+    }
+
     bthread_tag_t tag() const { return _tag; }
+
+    pid_t tid() const { return _tid; }
+
+    int64_t current_task_cpu_clock_ns() {
+        if (_last_cpu_clock_ns == 0) {
+            return 0;
+        }
+        int64_t total_ns = _cur_meta->stat.cpu_usage_ns;
+        total_ns += butil::cputhread_time_ns() - _last_cpu_clock_ns;
+        return total_ns;
+    }
 
 private:
 friend class TaskControl;
@@ -192,7 +208,7 @@ friend class TaskControl;
 
     int init(size_t runqueue_capacity);
 
-    // You shall call destroy_self() instead of destructor because deletion
+    // You shall call destroy_selfm() instead of destructor because deletion
     // of groups are postponed to avoid race.
     ~TaskGroup();
 
@@ -202,7 +218,7 @@ friend class TaskControl;
     static void _release_last_context(void*);
     static void _add_sleep_event(void*);
     struct ReadyToRunArgs {
-        bthread_t tid;
+        TaskMeta* meta;
         bool nosignal;
     };
     static void ready_to_run_in_worker(void*);
@@ -236,6 +252,8 @@ friend class TaskControl;
     // last scheduling time
     int64_t _last_run_ns;
     int64_t _cumulated_cputime_ns;
+    // last thread cpu clock
+    int64_t _last_cpu_clock_ns;
 
     size_t _nswitch;
     RemainedFn _last_context_remained;
@@ -257,6 +275,9 @@ friend class TaskControl;
     int _sched_recursive_guard;
     // tag of this taskgroup
     bthread_tag_t _tag;
+
+    // Worker thread id.
+    pid_t _tid;
 };
 
 }  // namespace bthread

@@ -206,14 +206,12 @@ bool HealthCheckTask::OnTriggeringTask(timespec* next_abstime) {
         hc = ptr->CheckHealth();
     }
     if (hc == 0) {
-        if (ptr->CreatedByConnect()) {
-            g_vars->channel_conn << -1;
-        }
         if (!FLAGS_health_check_path.empty()) {
             ptr->_ninflight_app_health_check.fetch_add(
                     1, butil::memory_order_relaxed);
         }
-        ptr->Revive();
+        // See comments above.
+        ptr->Revive(2/*note*/);
         ptr->_hc_count = 0;
         if (!FLAGS_health_check_path.empty()) {
             HealthCheckManager::StartCheck(_id, ptr->_health_check_interval_s);
@@ -224,6 +222,10 @@ bool HealthCheckTask::OnTriggeringTask(timespec* next_abstime) {
         LOG(INFO) << "Cancel checking " << *ptr;
         ptr->AfterHCCompleted();
         return false;
+    } else {
+        RPC_VLOG << "Fail to check " << *ptr
+                 << ", error code=" << errno
+                 << ": " << berror();
     }
     ++ ptr->_hc_count;
     *next_abstime = butil::seconds_from_now(ptr->_health_check_interval_s);

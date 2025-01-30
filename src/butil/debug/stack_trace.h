@@ -42,7 +42,8 @@ BUTIL_EXPORT bool EnableInProcessStackDumpingForSandbox();
 class BUTIL_EXPORT StackTrace {
  public:
   // Creates a stacktrace from the current location.
-  StackTrace();
+  // Exclude constructor frame of StackTrace if |exclude_self| is true.
+  explicit StackTrace(bool exclude_self = false);
 
   // Creates a stacktrace from an existing array of instruction
   // pointers (such as returned by Addresses()).  |count| will be
@@ -58,11 +59,19 @@ class BUTIL_EXPORT StackTrace {
 
   // Copying and assignment are allowed with the default functions.
 
-  ~StackTrace();
-
   // Gets an array of instruction pointer values. |*count| will be set to the
   // number of elements in the returned array.
   const void* const* Addresses(size_t* count) const;
+
+  // Gets the number of frames in the stack trace.
+  size_t FrameCount() const { return count_; }
+
+  // Copies the stack trace to |buffer|,
+  // where the size is min(max_nframes, frame_count()).
+  size_t CopyAddressTo(void** dest, size_t max_nframes) const;
+
+  // Whether if the given symbol is found in the stack trace.
+  bool FindSymbol(void* symbol) const;
 
   // Prints the stack trace to stderr.
   void Print() const;
@@ -70,6 +79,7 @@ class BUTIL_EXPORT StackTrace {
 #if !defined(__UCLIBC__)
   // Resolves backtrace to symbols and write to stream.
   void OutputToStream(std::ostream* os) const;
+  void OutputToString(std::string& str) const;
 #endif
 
   // Resolves backtrace to symbols and returns as string.
@@ -82,7 +92,7 @@ class BUTIL_EXPORT StackTrace {
   // doesn't give much more information.
   static const int kMaxTraces = 62;
 
-  void* trace_[kMaxTraces];
+  void* trace_[kMaxTraces]{};
 
   // The number of valid frames in |trace_|.
   size_t count_;

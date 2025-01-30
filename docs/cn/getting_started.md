@@ -108,6 +108,7 @@ cmake -B build && cmake --build build -j6
 ```shell
 $ cd example/echo_c++
 $ cmake -B build && cmake --build build -j4
+$ cd build
 $ ./echo_server &
 $ ./echo_client
 ```
@@ -325,7 +326,11 @@ $ docker run -it brpc:master /bin/bash
 
 ## GCC: 4.8-11.2
 
-c++11被默认启用，以去除去boost的依赖（比如atomic）。
+**推荐 8.2 及以上版本。**
+
+默认启用 c++11，以去除对 boost 的依赖（比如 atomic）。
+
+理论支持 c++11 的编译器都应可以，但部分编译器版本对 c++11 的支持存在问题。目前 GCC 4.8 可支持编译的最高版本为 1.5.0。
 
 GCC7中over-aligned的问题暂时被禁止。
 
@@ -341,17 +346,17 @@ GCC7中over-aligned的问题暂时被禁止。
 
 无已知问题。
 
-## protobuf: 2.4+
+## protobuf: 3.0-5.29
 
-同一个文件兼容pb 3.x版本和pb 2.x版本：
-不要使用proto3新增的类型，并且在proto文件的起始位置添加`syntax=proto2;`声明。
-[tools/add_syntax_equal_proto2_to_all.sh](https://github.com/apache/brpc/blob/master/tools/add_syntax_equal_proto2_to_all.sh)这个脚本可以给所有没有这行声明的proto文件添加`syntax="proto2"`声明。
+bRPC 中使用了 protobuf 内部 API，上游不保证相关 API 的兼容性，目前测试可以支持到 v29(5.29)，如有问题欢迎[反馈](https://github.com/apache/brpc/issues)。
+
+[1.8.0](https://github.com/apache/brpc/releases/tag/1.8.0) 中 [#2406](https://github.com/apache/brpc/pull/2406) 和 [#2493](https://github.com/apache/brpc/pull/2493)引入了部分 proto3 语法，所以目前 bRPC 不再兼容 protobuf 2.x 版本。如果你希望使用 2.x 版本，可以使用 1.8.0 之前的 bRPC 版本。
 
 pb 3.x中的Arena至今没被支持。
 
-## gflags: 2.0-2.2.1
+## gflags: 2.1-2.2.2
 
-无已知问题。
+2.1.1 中存在一处已知问题，需要[补丁](https://github.com/gflags/gflags/commit/408061b46974cc8377a8a794a048ecae359ad887)。
 
 ## openssl: 0.97-1.1
 
@@ -377,7 +382,7 @@ brpc默认**不**链接 [tcmalloc](http://goog-perftools.sourceforge.net/doc/tcm
 
 ## glog: 3.3+
 
-brpc实现了一个默认的[日志功能](../../src/butil/logging.h)它和glog冲突。要替换成glog，可以给config_brpc.sh增加*--with-glog*选项或者给cmake增加`-DWITH_GLOG=ON`选项。
+brpc实现了一个默认的[日志功能](../../src/butil/logging.h)它和glog冲突。要替换成glog，可以给config_brpc.sh增加`--with-glog`选项或者给cmake增加`-DWITH_GLOG=ON`选项。
 
 ## valgrind: 3.8+
 
@@ -386,6 +391,12 @@ brpc会自动检测valgrind（然后注册bthread的栈）。不支持老版本�
 ## thrift: 0.9.3-0.11.0
 
 无已知问题。
+
+## libunwind: 1.3-1.8.1
+
+bRPC默认**不**链接 [libunwind](https://github.com/libunwind/libunwind)。用户需要追踪bthread功能则链接libunwind，可以给config_brpc.sh增加`--with-bthread-tracer`选项或者给cmake增加`-DWITH_BTHREAD_TRACER=ON`选项。
+
+建议使用最新版本的libunwind。
 
 # 实例追踪
 

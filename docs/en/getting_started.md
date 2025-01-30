@@ -322,6 +322,8 @@ Same with [here](#compile-brpc-with-cmake)
 
 ## GCC: 4.8-11.2
 
+**Prefer GCC 8.2+**
+
 c++11 is turned on by default to remove dependencies on boost (atomic).
 
 The over-aligned issues in GCC7 is suppressed temporarily now.
@@ -338,17 +340,18 @@ no known issues.
 
 no known issues.
 
-## protobuf: 2.4+
+## protobuf: 3.0-5.29
 
-Be compatible with pb 3.x and pb 2.x with the same file:
-Don't use new types in proto3 and start the proto file with `syntax="proto2";`
-[tools/add_syntax_equal_proto2_to_all.sh](https://github.com/apache/brpc/blob/master/tools/add_syntax_equal_proto2_to_all.sh)can add `syntax="proto2"` to all proto files without it.
+bRPC uses some protobuf internal APIs, which may be changed upstream.
+Please [submit issue](https://github.com/apache/brpc/issues) if you have any problem.
+
+[#2406](https://github.com/apache/brpc/pull/2406) and [#2493](https://github.com/apache/brpc/pull/2493) in [version 1.8.0]((https://github.com/apache/brpc/releases/tag/1.8.0)) introduce some proto3 syntax, so currently bRPC is no longer compatible with pb 2.x version. If you want to use pb 2.x version, you can use bRPC version before 1.8.0.
 
 Arena in pb 3.x is not supported yet.
 
-## gflags: 2.0-2.2.1
+## gflags: 2.0-2.2.2
 
-no known issues.
+[gflags patch](https://github.com/gflags/gflags/commit/408061b46974cc8377a8a794a048ecae359ad887) is required when compiled with 2.1.1.
 
 ## openssl: 0.97-1.1
 
@@ -374,13 +377,19 @@ When you remove tcmalloc, not only remove the linkage with tcmalloc but also the
 
 ## glog: 3.3+
 
-brpc implements a default [logging utility](../../src/butil/logging.h) which conflicts with glog. To replace this with glog, add *--with-glog* to config_brpc.sh or add `-DWITH_GLOG=ON` to cmake.
+brpc implements a default [logging utility](../../src/butil/logging.h) which conflicts with glog. To replace this with glog, add `--with-glog` to config_brpc.sh or add `-DWITH_GLOG=ON` to cmake.
 
 ## valgrind: 3.8+
 
 brpc detects valgrind automatically (and registers stacks of bthread). Older valgrind(say 3.2) is not supported.
 
 ## thrift: 0.9.3-0.11.0
+
+## libunwind: 1.3-1.8.1
+
+brpc does **not** link [libunwind](https://github.com/libunwind/libunwind) by default. Users link libunwind on-demand by adding `--with-glog` to config_brpc.sh or adding `-DWITH_GLOG=ON` to cmake.
+
+It is recommended to use the latest possible version of libunwind.
 
 no known issues.
 

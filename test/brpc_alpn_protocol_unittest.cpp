@@ -21,17 +21,18 @@
 #include "gtest/gtest.h"
 #include "gflags/gflags.h"
 
-#include "echo.pb.h"
 #include "brpc/channel.h"
+#include "brpc/details/ssl_helper.h"
 #include "brpc/server.h"
-#include "butil/fd_guard.h"
 #include "butil/endpoint.h"
+#include "butil/fd_guard.h"
+#include "echo.pb.h"
 
 DEFINE_string(listen_addr, "0.0.0.0:8011", "Server listen address.");
 
 int main(int argc, char* argv[]) {
     testing::InitGoogleTest(&argc, argv);
-    google::ParseCommandLineFlags(&argc, &argv, true);    
+    ::GFLAGS_NAMESPACE::ParseCommandLineFlags(&argc, &argv, true);
     return RUN_ALL_TESTS();
 }
 

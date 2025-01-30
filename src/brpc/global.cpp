@@ -50,6 +50,11 @@
 #include "brpc/policy/hasher.h"
 #include "brpc/policy/dynpart_load_balancer.h"
 
+
+// Span
+#include "brpc/span.h"
+#include "bthread/unstable.h"
+
 // Compress handlers
 #include "brpc/compress.h"
 #include "brpc/policy/gzip_compress.h"
@@ -292,6 +297,7 @@ static void* GlobalUpdate(void*) {
     return NULL;
 }
 
+#if GOOGLE_PROTOBUF_VERSION < 3022000
 static void BaiduStreamingLogHandler(google::protobuf::LogLevel level,
                                      const char* filename, int line,
                                      const std::string& message) {
@@ -311,6 +317,7 @@ static void BaiduStreamingLogHandler(google::protobuf::LogLevel level,
     }
     CHECK(false) << filename << ':' << line << ' ' << message;
 }
+#endif
 
 static void GlobalInitializeOrDieImpl() {
     //////////////////////////////////////////////////////////////////
@@ -326,8 +333,13 @@ static void GlobalInitializeOrDieImpl() {
         CHECK(SIG_ERR != signal(SIGPIPE, SIG_IGN));
     }
 
+#if GOOGLE_PROTOBUF_VERSION < 3022000
     // Make GOOGLE_LOG print to comlog device
     SetLogHandler(&BaiduStreamingLogHandler);
+#endif
+
+    // Set bthread create span function
+    bthread_set_create_span_func(CreateBthreadSpan);
 
     // Setting the variable here does not work, the profiler probably check
     // the variable before main() for only once.

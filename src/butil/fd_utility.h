@@ -24,6 +24,9 @@
 
 namespace butil {
 
+// Returns true when fd is blocking, false otherwise.
+bool is_blocking(int fd);
+
 // Make file descriptor |fd| non-blocking
 // Returns 0 on success, -1 otherwise and errno is set (by fcntl)
 int make_non_blocking(int fd);
@@ -38,7 +41,10 @@ int make_close_on_exec(int fd);
 
 // Disable nagling on file descriptor |socket|.
 // Returns 0 on success, -1 when error and errno is set (by setsockopt)
-int make_no_delay(int socket);
+int make_no_delay(int sockfd);
+
+// Return true if the socket is connected.
+int is_connected(int sockfd);
 
 }  // namespace butil
 

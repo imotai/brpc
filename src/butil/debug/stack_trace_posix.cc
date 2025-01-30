@@ -45,7 +45,7 @@
 #include "butil/third_party/symbolize/symbolize.h"
 #endif
 
-extern int __attribute__((weak)) GetStackTrace(void** result, int max_depth, int skip_count);
+extern int BAIDU_WEAK GetStackTrace(void** result, int max_depth, int skip_count);
 
 namespace butil {
 namespace debug {
@@ -429,6 +429,23 @@ class StreamBacktraceOutputHandler : public BacktraceOutputHandler {
   DISALLOW_COPY_AND_ASSIGN(StreamBacktraceOutputHandler);
 };
 
+class StringBacktraceOutputHandler : public BacktraceOutputHandler {
+public:
+    explicit StringBacktraceOutputHandler(std::string& str) : _str(str) {}
+
+    DISALLOW_COPY_AND_ASSIGN(StringBacktraceOutputHandler);
+
+    void HandleOutput(const char* output) OVERRIDE {
+        if (NULL == output) {
+            return;
+        }
+        _str.append(output);
+    }
+
+private:
+    std::string& _str;
+};
+
 void WarmUpBacktrace() {
   // Warm up stack trace infrastructure. It turns out that on the first
   // call glibc initializes some internal data structures using pthread_once,
@@ -746,21 +763,44 @@ bool EnableInProcessStackDumping() {
   return success;
 }
 
-StackTrace::StackTrace() {
+StackTrace::StackTrace(bool exclude_self) {
   // NOTE: This code MUST be async-signal safe (it's used by in-process
   // stack dumping signal handler). NO malloc or stdio is allowed here.
 
   if (GetStackTrace) {
-      count_ = GetStackTrace(trace_, arraysize(trace_), 0);
+    count_ = GetStackTrace(trace_, arraysize(trace_), exclude_self ? 1 : 0);
   } else {
 #if !defined(__UCLIBC__)
-      // Though the backtrace API man page does not list any possible negative
-      // return values, we take no chance.
-      count_ = butil::saturated_cast<size_t>(backtrace(trace_, arraysize(trace_)));
+    // Though the backtrace API man page does not list any possible negative
+    // return values, we take no chance.
+    count_ = butil::saturated_cast<size_t>(backtrace(trace_, arraysize(trace_)));
+    if (exclude_self && count_ > 1) {
+      // Skip the top frame.
+      memmove(trace_, trace_ + 1, (count_ - 1) * sizeof(void*));
+      count_--;
+    }
 #else
-      count_ = 0;
+    count_ = 0;
 #endif
   }
+}
+
+bool StackTrace::FindSymbol(void* symbol) const {
+#if !defined(__UCLIBC__)
+  for (size_t i = 0; i < count_; ++i) {
+    uint64_t saddr;
+    // Subtract by one as return address of function may be in the next
+    // function when a function is annotated as noreturn.
+    void* address = static_cast<char*>(trace_[i]) - 1;
+    if (!google::SymbolizeAddress(address, &saddr)) {
+      continue;
+    }
+    if ((void*)saddr == symbol) {
+      return true;
+    }
+  }
+#endif
+  return false;
 }
 
 void StackTrace::Print() const {
@@ -777,6 +817,11 @@ void StackTrace::Print() const {
 void StackTrace::OutputToStream(std::ostream* os) const {
   StreamBacktraceOutputHandler handler(os);
   ProcessBacktrace(trace_, count_, &handler);
+}
+
+void StackTrace::OutputToString(std::string& str) const {
+    StringBacktraceOutputHandler handler(str);
+    ProcessBacktrace(trace_, count_, &handler);
 }
 #endif
 

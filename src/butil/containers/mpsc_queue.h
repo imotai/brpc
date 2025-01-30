@@ -24,6 +24,7 @@
 
 #include "butil/object_pool.h"
 #include "butil/type_traits.h"
+#include "butil/memory/manual_constructor.h"
 
 namespace butil {
 
@@ -32,8 +33,7 @@ struct BAIDU_CACHELINE_ALIGNMENT MPSCQueueNode {
     static MPSCQueueNode* const UNCONNECTED;
 
     MPSCQueueNode* next{NULL};
-    char data_mem[sizeof(T)]{};
-
+    ManualConstructor<T> data_mem;
 };
 
 template <typename T>
@@ -52,7 +52,7 @@ template <typename T>
 class ObjectPoolAllocator {
 public:
     void* Alloc() { return get_object<MPSCQueueNode<T>>(); }
-    void Free(void* p) { return_object(p); }
+    void Free(void* p) { return_object(static_cast<MPSCQueueNode<T>*>(p)); }
 };
 
 
@@ -95,7 +95,7 @@ template <typename T, typename Alloc>
 void MPSCQueue<T, Alloc>::Enqueue(typename add_const_reference<T>::type data) {
     auto node = (MPSCQueueNode<T>*)_alloc.Alloc();
     node->next = MPSCQueueNode<T>::UNCONNECTED;
-    new ((void*)&node->data_mem) T(data);
+    node->data_mem.Init(data);
     EnqueueImpl(node);
 }
 
@@ -103,7 +103,7 @@ template <typename T, typename Alloc>
 void MPSCQueue<T, Alloc>::Enqueue(T&& data) {
     auto node = (MPSCQueueNode<T>*)_alloc.Alloc();
     node->next = MPSCQueueNode<T>::UNCONNECTED;
-    new ((void*)&node->data_mem) T(std::forward<T>(data));
+    node->data_mem.Init(data);
     EnqueueImpl(node);
 }
 
@@ -129,15 +129,14 @@ bool MPSCQueue<T, Alloc>::DequeueImpl(T* data) {
     if (_cur_dequeue_node) {
         node = _cur_dequeue_node;
     } else {
-        node = _cur_enqueue_node.load(memory_order_relaxed);
+        node = _cur_enqueue_node.exchange(NULL, memory_order_relaxed);
     }
     if (!node) {
         return false;
     }
 
-    _cur_enqueue_node.store(NULL, memory_order_relaxed);
     if (data) {
-        auto mem = (T* const)node->data_mem;
+        auto mem = (T* const)node->data_mem.get();
         *data = std::move(*mem);
     }
     MPSCQueueNode<T>* old_node = node;
@@ -145,7 +144,7 @@ bool MPSCQueue<T, Alloc>::DequeueImpl(T* data) {
         ReverseList(node);
     }
     _cur_dequeue_node = node->next;
-    return_object(old_node);
+    _alloc.Free(old_node);
 
     return true;
 }
